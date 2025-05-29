@@ -4,16 +4,19 @@ import { getUserEnrollments, getCourseById } from '../services/courseService';
 import { useAuth } from '../context/AuthContext';
 import { Course, Enrollment } from '../types/course';
 import { Video, Calendar, Download, ExternalLink, Clock, Award, BookOpen } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface EnrolledCourse extends Enrollment {
-  courseDetails?: Course;
+  courseDetails?: Course | null;
 }
 
 export function UserDashboard() {
+  const { currentUser, updateDisplayName } = useAuth();
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('current');
-  const { currentUser } = useAuth();
+  const [displayName, setDisplayName] = useState(currentUser?.displayName || '');
+  const [isUpdatingDisplayName, setIsUpdatingDisplayName] = useState(false);
 
   useEffect(() => {
     const fetchEnrollments = async () => {
@@ -25,7 +28,7 @@ export function UserDashboard() {
         
         // Fetch course details for each enrollment
         const enrichedEnrollments = await Promise.all(
-          enrollments.map(async (enrollment) => {
+          enrollments.enrollments.map(async (enrollment: Enrollment) => {
             const courseDetails = await getCourseById(enrollment.courseId);
             return {
               ...enrollment,
@@ -43,6 +46,12 @@ export function UserDashboard() {
     };
 
     fetchEnrollments();
+
+    // Initialize display name state when currentUser is available
+    if (currentUser) {
+      setDisplayName(currentUser.displayName || '');
+    }
+
   }, [currentUser]);
 
   // Filter courses based on active tab
@@ -54,6 +63,22 @@ export function UserDashboard() {
     return true;
   });
 
+  const handleDisplayNameUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!displayName.trim()) return;
+
+    setIsUpdatingDisplayName(true);
+    try {
+      await updateDisplayName(displayName.trim());
+      toast.success('Display name updated successfully!');
+    } catch (error) {
+      console.error('Error updating display name:', error);
+      toast.error('Failed to update display name.');
+    } finally {
+      setIsUpdatingDisplayName(false);
+    }
+  };
+
   return (
     <div className="animate-fade-in bg-gray-50 min-h-screen py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -64,6 +89,47 @@ export function UserDashboard() {
           </p>
         </div>
         
+        {/* Welcome Message */}
+        {currentUser && (
+          <div className="mb-8 p-6 bg-white rounded-lg shadow-md">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+              Hi, {currentUser.displayName || currentUser.email}, welcome to the dashboard!
+            </h2>
+            {currentUser.displayName && (
+              <p className="text-gray-700">Email: {currentUser.email}</p>
+            )}
+
+            {/* Display Name Update Form */}
+            <form onSubmit={handleDisplayNameUpdate} className="mt-4 flex items-end gap-4">
+              <div className="flex-grow">
+                <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 mb-1">
+                  Update Display Name
+                </label>
+                <input
+                  type="text"
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                  placeholder="Enter your name"
+                  disabled={isUpdatingDisplayName}
+                />
+              </div>
+              <button
+                type="submit"
+                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 ${isUpdatingDisplayName ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500'}`}
+                disabled={isUpdatingDisplayName}
+              >
+                {isUpdatingDisplayName ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
+                ) : null}
+                Update
+              </button>
+            </form>
+
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow-md overflow-hidden">
           <div className="border-b border-gray-200">
             <nav className="flex">

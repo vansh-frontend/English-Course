@@ -8,34 +8,33 @@ import {
   sendPasswordResetEmail,
   sendEmailVerification,
   updateProfile,
-  PhoneAuthProvider,
-  signInWithPhoneNumber,
-  RecaptchaVerifier
+  GoogleAuthProvider,
+  signInWithPopup,
+  UserCredential,
+  AuthError
 } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface AuthContextType {
   currentUser: User | null;
   userRole: string;
   loading: boolean;
-  signup: (email: string, password: string) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string) => Promise<UserCredential>;
+  login: (email: string, password: string) => Promise<UserCredential>;
+  loginWithGoogle: () => Promise<UserCredential>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateUserProfile: (displayName: string) => Promise<void>;
-  setupPhoneAuth: (elementId: string) => Promise<void>;
-  signInWithPhone: (phoneNumber: string) => Promise<any>;
-  confirmPhoneCode: (code: string, verificationId: string) => Promise<void>;
+  updateDisplayName: (displayName: string) => Promise<void>;
   isAdmin: () => boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType | null>(null);
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
@@ -45,16 +44,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string>('user');
   const [loading, setLoading] = useState(true);
-  const [recaptchaVerifier, setRecaptchaVerifier] = useState<RecaptchaVerifier | null>(null);
-  const navigate = useNavigate();
 
+  // Effect to handle authentication state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      
-      if (user) {
-        // Get user role from Firestore
-        try {
+      try {
+        setCurrentUser(user);
+        
+        if (user) {
+          // Get user role from Firestore
           const userDoc = await getDoc(doc(db, 'users', user.uid));
           if (userDoc.exists()) {
             setUserRole(userDoc.data().role || 'user');
@@ -62,20 +60,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // If user document doesn't exist yet, create it
             await setDoc(doc(db, 'users', user.uid), {
               email: user.email,
-              displayName: user.displayName,
-              phoneNumber: user.phoneNumber,
+              displayName: user.displayName || '',
+              phoneNumber: user.phoneNumber || '',
               role: 'user',
-              createdAt: new Date()
+              createdAt: serverTimestamp(),
+              lastLoginAt: serverTimestamp()
             });
             setUserRole('user');
           }
-        } catch (error) {
-          console.error("Error getting user role:", error);
+        } else {
           setUserRole('user');
         }
+      } catch (error) {
+        console.error("Error in auth state change:", error);
+        setUserRole('user');
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     });
 
     return unsubscribe;
@@ -84,68 +85,131 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signup(email: string, password: string) {
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
+      
       // Create user profile in Firestore
       await setDoc(doc(db, 'users', result.user.uid), {
         email: email,
         role: 'user',
-        createdAt: new Date()
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp()
       });
-      await sendEmailVerification(result.user);
+
+      // Send email verification
+      if (result.user) {
+        await sendEmailVerification(result.user);
+      }
+      
       return result;
     } catch (error) {
-      console.error("Error in signup:", error);
-      throw error;
+      const authError = error as AuthError;
+      console.error("Error in signup:", authError);
+      throw authError;
     }
   }
 
   async function login(email: string, password: string) {
-    return signInWithEmailAndPassword(auth, email, password);
+    try {
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Update last login timestamp
+      if (result.user) {
+        await setDoc(doc(db, 'users', result.user.uid), {
+          lastLoginAt: serverTimestamp()
+        }, { merge: true });
+      }
+      
+      return result;
+    } catch (error) {
+      const authError = error as AuthError;
+      console.error("Error in login:", authError);
+      throw authError;
+    }
+  }
+
+  async function loginWithGoogle() {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
+      
+      const result = await signInWithPopup(auth, provider);
+      
+      // Check if user document exists
+      const userDoc = await getDoc(doc(db, 'users', result.user.uid));
+      
+      if (!userDoc.exists()) {
+        // Create user profile in Firestore if it doesn't exist
+        await setDoc(doc(db, 'users', result.user.uid), {
+          email: result.user.email,
+          displayName: result.user.displayName || '',
+          photoURL: result.user.photoURL || '',
+          role: 'user',
+          createdAt: serverTimestamp(),
+          lastLoginAt: serverTimestamp()
+        });
+      } else {
+        // Update last login timestamp
+        await setDoc(doc(db, 'users', result.user.uid), {
+          lastLoginAt: serverTimestamp(),
+          displayName: result.user.displayName || userDoc.data().displayName,
+          photoURL: result.user.photoURL || userDoc.data().photoURL
+        }, { merge: true });
+      }
+      
+      return result;
+    } catch (error) {
+      const authError = error as AuthError;
+      console.error("Error in Google sign in:", authError);
+      throw authError;
+    }
   }
 
   async function logout() {
-    await signOut(auth);
-    navigate('/login');
+    try {
+      await signOut(auth);
+      // Navigation will be handled by the components using useAuth
+    } catch (error) {
+      console.error("Error in logout:", error);
+      throw error;
+    }
   }
 
   async function resetPassword(email: string) {
-    return sendPasswordResetEmail(auth, email);
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (error) {
+      const authError = error as AuthError;
+      console.error("Error in reset password:", authError);
+      throw authError;
+    }
   }
 
   async function updateUserProfile(displayName: string) {
     if (!currentUser) throw new Error('No user logged in');
-    await updateProfile(currentUser, { displayName });
     
-    // Update Firestore user document
-    await setDoc(doc(db, 'users', currentUser.uid), {
-      displayName
-    }, { merge: true });
-  }
-
-  async function setupPhoneAuth(elementId: string) {
-    if (!window.recaptchaVerifier) {
-      const verifier = new RecaptchaVerifier(auth, elementId, {
-        size: 'invisible',
-        callback: () => {
-          // reCAPTCHA solved, allow signInWithPhoneNumber.
-        }
-      });
-      setRecaptchaVerifier(verifier);
-      window.recaptchaVerifier = verifier;
+    try {
+      // Update Firestore user document
+      await setDoc(doc(db, 'users', currentUser.uid), {
+        displayName,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      throw error;
     }
   }
 
-  async function signInWithPhone(phoneNumber: string) {
-    if (!recaptchaVerifier && !window.recaptchaVerifier) {
-      throw new Error('reCAPTCHA not initialized');
-    }
-    
-    const verifier = recaptchaVerifier || window.recaptchaVerifier;
-    return signInWithPhoneNumber(auth, phoneNumber, verifier);
-  }
+  async function updateDisplayName(displayName: string) {
+    if (!currentUser) throw new Error('No user logged in');
 
-  async function confirmPhoneCode(code: string, verificationId: string) {
-    const credential = PhoneAuthProvider.credential(verificationId, code);
-    return auth.currentUser?.linkWithCredential(credential);
+    try {
+      await updateProfile(currentUser, { displayName });
+      // The onAuthStateChanged listener will update the currentUser state
+    } catch (error) {
+      console.error("Error updating display name:", error);
+      throw error;
+    }
   }
 
   function isAdmin() {
@@ -158,12 +222,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     signup,
     login,
+    loginWithGoogle,
     logout,
     resetPassword,
     updateUserProfile,
-    setupPhoneAuth,
-    signInWithPhone,
-    confirmPhoneCode,
+    updateDisplayName,
     isAdmin
   };
 

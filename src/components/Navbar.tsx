@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BookOpen, Menu, X, User, LogOut } from 'lucide-react';
+import './Navbar.css';
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -28,6 +29,19 @@ export function Navbar() {
   useEffect(() => {
     setIsOpen(false);
   }, [location]);
+
+  // Effect to prevent background scrolling when sidebar is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('overflow-hidden');
+    } else {
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    return () => {
+      document.body.classList.remove('overflow-hidden');
+    };
+  }, [isOpen]);
 
   const handleLogout = async () => {
     try {
@@ -74,6 +88,7 @@ export function Navbar() {
                     onClick={handleLogout}
                     className="flex items-center px-4 py-2 rounded-md text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 transition-colors"
                   >
+                    {currentUser?.displayName && <span className="mr-2">Hi, {currentUser.displayName}</span>}
                     <LogOut className="h-4 w-4 mr-2" /> Logout
                   </button>
                 </>
@@ -92,23 +107,31 @@ export function Navbar() {
           
           <div className="md:hidden">
             <button
-              onClick={() => setIsOpen(!isOpen)}
+              onClick={() => setIsOpen(true)}
               className="inline-flex items-center justify-center p-2 rounded-md text-gray-900 hover:text-primary-600 focus:outline-none"
             >
-              {isOpen ? (
-                <X className="block h-6 w-6" />
-              ) : (
-                <Menu className="block h-6 w-6" />
-              )}
+              <Menu className="block h-6 w-6" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Mobile menu */}
-      {isOpen && (
-        <div className="md:hidden bg-white">
-          <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+      {/* Mobile menu sidebar */}
+      <div className={`fixed inset-0 z-40 md:hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        {/* Overlay */}
+        {isOpen && (
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsOpen(false)}></div>
+        )}
+        
+        {/* Sidebar */}
+        <div className="relative w-64 max-w-xs h-full bg-white shadow-xl flex flex-col justify-between ml-auto">
+          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+            <span className="text-lg font-bold text-primary-800">Menu</span>
+            <button onClick={() => setIsOpen(false)} className="p-2 rounded-md text-gray-900 hover:text-primary-600 focus:outline-none">
+              <X className="block h-6 w-6" />
+            </button>
+          </div>
+          <div className="flex flex-col flex-grow p-4 space-y-2">
             <Link to="/" className="block px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:text-primary-600">
               Home
             </Link>
@@ -127,27 +150,33 @@ export function Navbar() {
                     Admin
                   </Link>
                 )}
-                
-                <button
-                  onClick={handleLogout}
-                  className="flex w-full items-center px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:text-primary-600"
-                >
-                  <LogOut className="h-5 w-5 mr-2" /> Logout
-                </button>
               </>
             ) : (
               <>
                 <Link to="/login" className="block px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:text-primary-600">
                   Log in
                 </Link>
-                <Link to="/signup" className="block px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:bg-primary-50">
+                <Link to="/signup" className="block px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:text-primary-600">
                   Sign up
                 </Link>
               </>
             )}
           </div>
+          
+          {currentUser && (
+            <div className="p-4 border-t border-gray-200">
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center px-3 py-2 rounded-md text-base font-medium text-gray-900 hover:text-primary-600"
+              >
+                {currentUser?.displayName && <span className="mr-2">Hi, {currentUser.displayName}</span>}
+                <LogOut className="h-5 w-5 mr-2" /> Logout
+              </button>
+            </div>
+          )}
+
         </div>
-      )}
+      </div>
     </nav>
   );
 }

@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { useAuth } from '../context/AuthContext';
 import { BookOpen, Mail, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { AuthError, updateProfile } from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../services/firebase';
+import toast from 'react-hot-toast';
 
 interface SignupFormData {
   name: string;
@@ -13,45 +17,91 @@ interface SignupFormData {
 
 export function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { signup, updateUserProfile } = useAuth();
+  const { signup, loginWithGoogle, loading, currentUser } = useAuth();
   const navigate = useNavigate();
   
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<SignupFormData>();
+  const { register, handleSubmit, watch, formState: { errors }, reset } = useForm<SignupFormData>();
   const password = watch('password');
   
   const onSubmit = async (data: SignupFormData) => {
-    setLoading(true);
     setError('');
     
     try {
-      // Create new user
-      await signup(data.email, data.password);
+      // First create the account
+      const result = await signup(data.email, data.password);
       
-      // Update profile with display name
-      await updateUserProfile(data.name);
+      // Update both Firebase Auth profile and Firestore document
+      if (result.user) {
+        // Update Firebase Auth profile
+        await updateProfile(result.user, { displayName: data.name });
+        
+        // Update Firestore document
+        await setDoc(doc(db, 'users', result.user.uid), {
+          email: data.email,
+          displayName: data.name,
+          role: 'user',
+          createdAt: serverTimestamp(),
+          lastLoginAt: serverTimestamp()
+        }, { merge: true });
+      }
       
-      // Redirect to dashboard
-      navigate('/dashboard');
-    } catch (error: any) {
-      setError(
-        error.code === 'auth/email-already-in-use'
-          ? 'Email already in use. Please try a different email or log in.'
-          : error.code === 'auth/weak-password'
-            ? 'Password is too weak. Please use a stronger password.'
-            : 'Failed to create account. Please try again.'
-      );
-      console.error('Signup error:', error);
-    } finally {
-      setLoading(false);
+      toast.success('Account created successfully! Please check your email to verify your account.');
+      
+      // Navigate to login page after successful signup
+      navigate('/login', { 
+        replace: true,
+        state: { message: 'Please check your email to verify your account before logging in.' }
+      });
+      reset();
+
+    } catch (error) {
+      const authError = error as AuthError;
+      const errorMessage = 
+        authError.code === 'auth/email-already-in-use'
+          ? 'An account with this email already exists.'
+          : authError.code === 'auth/invalid-email'
+            ? 'Please enter a valid email address.'
+            : authError.code === 'auth/weak-password'
+              ? 'Password is too weak. Please use a stronger password.'
+              : authError.code === 'auth/network-request-failed'
+                ? 'Network error. Please check your internet connection.'
+                : 'Failed to create account. Please try again.';
+      
+      setError(errorMessage);
+      toast.error(errorMessage);
+      console.error('Signup error:', authError);
     }
   };
   
   const togglePasswordVisibility = () => {
     setShowPassword(prev => !prev);
   };
-  
+
+  const handleGoogleSignUp = async () => {
+    setError('');
+    
+    try {
+      await loginWithGoogle();
+      toast.success('Successfully signed up with Google!');
+
+    } catch (error) {
+      const authError = error as AuthError;
+      const errorMessage = 
+        authError.code === 'auth/popup-closed-by-user'
+          ? 'Sign up was cancelled. Please try again.'
+          : authError.code === 'auth/popup-blocked'
+            ? 'Pop-up was blocked. Please allow pop-ups for this site.'
+            : authError.code === 'auth/network-request-failed'
+              ? 'Network error. Please check your internet connection.'
+              : 'Failed to sign up with Google. Please try again.';
+      
+      setError(errorMessage);
+      toast.error(errorMessage);
+      console.error('Google sign up error:', authError);
+    }
+  };
+
   return (
     <div className="animate-fade-in min-h-screen bg-gray-50 py-12">
       <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8">
@@ -222,16 +272,22 @@ export function SignupPage() {
             <div className="mt-6 grid grid-cols-1 gap-3">
               <button
                 type="button"
-                className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                onClick={handleGoogleSignUp}
+                disabled={loading}
+                className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24">
-                  <g transform="matrix(1, 0, 0, 1, 27.009001, -39.238998)">
-                    <path fill="#4285F4" d="M -3.264 51.509 C -3.264 50.719 -3.334 49.969 -3.454 49.239 L -14.754 49.239 L -14.754 53.749 L -8.284 53.749 C -8.574 55.229 -9.424 56.479 -10.684 57.329 L -10.684 60.329 L -6.824 60.329 C -4.564 58.239 -3.264 55.159 -3.264 51.509 Z" />
-                    <path fill="#34A853" d="M -14.754 63.239 C -11.514 63.239 -8.804 62.159 -6.824 60.329 L -10.684 57.329 C -11.764 58.049 -13.134 58.489 -14.754 58.489 C -17.884 58.489 -20.534 56.379 -21.484 53.529 L -25.464 53.529 L -25.464 56.619 C -23.494 60.539 -19.444 63.239 -14.754 63.239 Z" />
-                    <path fill="#FBBC05" d="M -21.484 53.529 C -21.734 52.809 -21.864 52.039 -21.864 51.239 C -21.864 50.439 -21.724 49.669 -21.484 48.949 L -21.484 45.859 L -25.464 45.859 C -26.284 47.479 -26.754 49.299 -26.754 51.239 C -26.754 53.179 -26.284 54.999 -25.464 56.619 L -21.484 53.529 Z" />
-                    <path fill="#EA4335" d="M -14.754 43.989 C -12.984 43.989 -11.404 44.599 -10.154 45.789 L -6.734 42.369 C -8.804 40.429 -11.514 39.239 -14.754 39.239 C -19.444 39.239 -23.494 41.939 -25.464 45.859 L -21.484 48.949 C -20.534 46.099 -17.884 43.989 -14.754 43.989 Z" />
-                  </g>
-                </svg>
+                {loading ? (
+                  <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-gray-700 mr-2"></div>
+                ) : (
+                  <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24">
+                    <g transform="matrix(1, 0, 0, 1, 27.009001, -39.238998)">
+                      <path fill="#4285F4" d="M -3.264 51.509 C -3.264 50.719 -3.334 49.969 -3.454 49.239 L -14.754 49.239 L -14.754 53.749 L -8.284 53.749 C -8.574 55.229 -9.424 56.479 -10.684 57.329 L -10.684 60.329 L -6.824 60.329 C -4.564 58.239 -3.264 55.159 -3.264 51.509 Z" />
+                      <path fill="#34A853" d="M -14.754 63.239 C -11.514 63.239 -8.804 62.159 -6.824 60.329 L -10.684 57.329 C -11.764 58.049 -13.134 58.489 -14.754 58.489 C -17.884 58.489 -20.534 56.379 -21.484 53.529 L -25.464 53.529 L -25.464 56.619 C -23.494 60.539 -19.444 63.239 -14.754 63.239 Z" />
+                      <path fill="#FBBC05" d="M -21.484 53.529 C -21.734 52.809 -21.864 52.039 -21.864 51.239 C -21.864 50.439 -21.724 49.669 -21.484 48.949 L -21.484 45.859 L -25.464 45.859 C -26.284 47.479 -26.754 49.299 -26.754 51.239 C -26.754 53.179 -26.284 54.999 -25.464 56.619 L -21.484 53.529 Z" />
+                      <path fill="#EA4335" d="M -14.754 43.989 C -12.984 43.989 -11.404 44.599 -10.154 45.789 L -6.734 42.369 C -8.804 40.429 -11.514 39.239 -14.754 39.239 C -19.444 39.239 -23.494 41.939 -25.464 45.859 L -21.484 48.949 C -20.534 46.099 -17.884 43.989 -14.754 43.989 Z" />
+                    </g>
+                  </svg>
+                )}
                 Sign up with Google
               </button>
             </div>
